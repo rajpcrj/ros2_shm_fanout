@@ -11,12 +11,19 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <thread>
 #include <vector>
 
 using namespace shm_contract;
 constexpr int MAX_RETRY = 8;
+
+// CLOCK_MONOTONIC, matching the writer's steady_clock stamp.
+static inline uint64_t mono_ns() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 struct Reader {
     std::string name;
@@ -68,15 +75,27 @@ int main(int argc, char** argv) {
         }
     }
 
+    // BENCH mode (env SHM_BENCH=1): emit one "lat=<ms>ms" line per *new* frame,
+    // using CLOCK_MONOTONIC (now - header.timestamp_ns), and poll tighter so a
+    // 30 Hz / sub-ms signal isn't undersampled by the default 5 ms sleep.
+    const bool bench = std::getenv("SHM_BENCH") != nullptr;
+    const auto poll = bench ? std::chrono::microseconds(200)
+                            : std::chrono::microseconds(5000);
+
     Header h;
     std::vector<uint8_t> buf;
-    uint32_t last_seq = 0;
+    std::vector<uint32_t> last_seq(readers.size(), 0);  // per-reader, no cross-stream race
     while (true) {
-        for (auto& r : readers) {
+        for (size_t i = 0; i < readers.size(); ++i) {
+            auto& r = readers[i];
             if (!r.hdr || r.hdr == MAP_FAILED) continue;
-            if (r.read_frame(h, buf) && h.seq != last_seq) {
-                last_seq = h.seq;
-                if (h.encoding_id == ENC_FLAT) {
+            if (r.read_frame(h, buf) && h.seq != last_seq[i]) {
+                last_seq[i] = h.seq;
+                if (bench) {
+                    double lat_ms = (mono_ns() - h.timestamp_ns) / 1e6;
+                    std::printf("[%s] seq=%u %uB lat=%.3fms\n",
+                                r.name.c_str(), h.seq, h.data_size, lat_ms);
+                } else if (h.encoding_id == ENC_FLAT) {
                     std::printf("[%s] seq=%u FLAT %ux%ux%u dtype_id=%u %uB (%s)\n",
                                 r.name.c_str(), h.seq, h.width, h.height,
                                 h.channels, h.dtype_id, h.data_size, h.type_name);
@@ -87,7 +106,7 @@ int main(int argc, char** argv) {
                 std::fflush(stdout);
             }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        std::this_thread::sleep_for(poll);
     }
     return 0;
 }

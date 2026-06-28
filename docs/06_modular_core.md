@@ -35,7 +35,7 @@ runs in programs that have never sourced ROS (see `examples/cpp/{write,read}_cpp
 The core's job is **mechanism, not policy**:
 - allocate/map the `/dev/shm` files for a stream,
 - the seqlock write/read protocol (torn-frame safety),
-- the futex wake/wait (O(1) fan-out),
+- the futex wake/wait (writer's notify is one O(1) `FUTEX_WAKE`; readers each wait/read),
 - the 64-byte header contract + FLAT/CDR framing.
 
 It does **not** know what a "ROS Image" is, how to serialize CDR, or how to open a

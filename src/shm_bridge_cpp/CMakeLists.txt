@@ -239,6 +239,28 @@ add_executable(ex_ros2_to_shm ${EXAMPLES_DIR}/ros2_to_shm.cpp)
 ament_target_dependencies(ex_ros2_to_shm rclcpp sensor_msgs)
 target_link_libraries(ex_ros2_to_shm shm_bridge_cpp pthread)
 
+add_executable(ex_ros2_all_to_shm ${EXAMPLES_DIR}/ros2_all_to_shm.cpp)
+ament_target_dependencies(ex_ros2_all_to_shm rclcpp)
+target_link_libraries(ex_ros2_all_to_shm shm_bridge_cpp pthread)
+
+# ----- end-to-end pipeline (4 stages) -----
+set(E2E_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../examples/end_to_end)
+add_executable(e2e_1_ros2_to_shm ${E2E_DIR}/1_ros2_to_shm.cpp)
+ament_target_dependencies(e2e_1_ros2_to_shm rclcpp)
+target_link_libraries(e2e_1_ros2_to_shm shm_bridge_cpp pthread)
+
+add_executable(e2e_2_shm_to_udp ${E2E_DIR}/2_shm_to_udp.cpp)
+target_include_directories(e2e_2_shm_to_udp PRIVATE ${E2E_DIR})
+target_link_libraries(e2e_2_shm_to_udp shm_bridge_cpp pthread)
+
+add_executable(e2e_3_udp_to_shm ${E2E_DIR}/3_udp_to_shm.cpp)
+target_include_directories(e2e_3_udp_to_shm PRIVATE ${E2E_DIR})
+target_link_libraries(e2e_3_udp_to_shm shm_bridge_cpp pthread)
+
+add_executable(e2e_4_shm_to_ros2 ${E2E_DIR}/4_shm_to_ros2.cpp)
+ament_target_dependencies(e2e_4_shm_to_ros2 rclcpp)
+target_link_libraries(e2e_4_shm_to_ros2 shm_bridge_cpp pthread)
+
 add_executable(ex_shm_to_ros2 ${EXAMPLES_DIR}/shm_to_ros2.cpp)
 ament_target_dependencies(ex_shm_to_ros2 rclcpp sensor_msgs)
 target_link_libraries(ex_shm_to_ros2 shm_bridge_cpp pthread)
@@ -264,7 +286,12 @@ install(
     ex_shm_to_network
     ex_shm_to_udp
     ex_ros2_to_shm
+    ex_ros2_all_to_shm
     ex_shm_to_ros2
+    e2e_1_ros2_to_shm
+    e2e_2_shm_to_udp
+    e2e_3_udp_to_shm
+    e2e_4_shm_to_ros2
   DESTINATION lib/${PROJECT_NAME}
 )
 

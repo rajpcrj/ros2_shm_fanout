@@ -19,14 +19,12 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREFIX="${PREFIX:-/usr/local}"
-INC_SRC="$REPO/src/shm_bridge_cpp/include/shm_bridge_cpp"
-# Prefer the colcon-installed .so; fall back to the build tree.
-SO_SRC=""
-for cand in \
-  "$REPO/install/shm_bridge_cpp/lib/libshm_bridge_cpp.so" \
-  "$REPO/build/shm_bridge_cpp/libshm_bridge_cpp.so"; do
-  [ -f "$cand" ] && SO_SRC="$cand" && break
-done
+# ALWAYS install from the committed prebuilt/ folder. This is the single source of
+# truth that ships on GitHub, so the installer behaves identically on a fresh clone
+# (no build/ or install/ needed). To refresh prebuilt/ after changing the library,
+# rebuild and copy the .so+headers into prebuilt/ (see prebuilt/README.md).
+SO_SRC="$REPO/prebuilt/lib/libshm_bridge_cpp.so"
+INC_SRC="$REPO/prebuilt/include/shm_bridge_cpp"
 
 # Decide whether sudo is needed: walk up to the first existing ancestor of PREFIX
 # and test if WE can write there. (A non-existent PREFIX under $HOME must NOT
@@ -45,9 +43,12 @@ if [ "${1:-}" = "--uninstall" ]; then
   exit 0
 fi
 
-if [ -z "$SO_SRC" ]; then
-  echo "ERROR: libshm_bridge_cpp.so not found. Build it first:" >&2
-  echo "  cd $REPO && colcon build --packages-select shm_bridge_cpp" >&2
+if [ ! -f "$SO_SRC" ]; then
+  echo "ERROR: $SO_SRC not found." >&2
+  echo "  The prebuilt library is missing. Rebuild and refresh prebuilt/:" >&2
+  echo "    cd $REPO && colcon build --packages-select shm_bridge_cpp" >&2
+  echo "    cp install/shm_bridge_cpp/lib/libshm_bridge_cpp.so prebuilt/lib/" >&2
+  echo "    cp src/shm_bridge_cpp/include/shm_bridge_cpp/*.hpp prebuilt/include/shm_bridge_cpp/" >&2
   exit 1
 fi
 

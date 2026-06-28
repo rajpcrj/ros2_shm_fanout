@@ -89,8 +89,13 @@ class GenericSHMReader(Node):
         super().__init__("generic_shm_reader")
         self.declare_parameter("streams", ["rgb"])
         self.declare_parameter("poll_hz", 5.0)
+        # report end-to-end latency = now - header.timestamp_ns (writer stamp).
+        # Only meaningful when reader and writer share a clock (same host).
+        self.declare_parameter("report_latency", True)
         names = self.get_parameter("streams").value
+        self.report_latency = bool(self.get_parameter("report_latency").value)
         self.readers = {}
+        self._last_seq = {}   # nm -> last reported seq (skip duplicate frames)
         for nm in names:
             try:
                 self.readers[nm] = StreamReader(nm)
@@ -106,12 +111,21 @@ class GenericSHMReader(Node):
             obj, hdr = rd.read_frame()
             if obj is None:
                 continue
+            if hdr["seq"] == self._last_seq.get(nm):
+                continue                      # same frame as last poll — skip
+            self._last_seq[nm] = hdr["seq"]
             if isinstance(obj, np.ndarray):
                 desc = f"FLAT ndarray shape={obj.shape} dtype={obj.dtype}"
             else:
                 desc = f"CDR {type(obj).__module__}.{type(obj).__name__}"
+            lat = ""
+            if self.report_latency and hdr["timestamp_ns"]:
+                # writer stamps time.time_ns() right before the seqlock write;
+                # subtract from now to get publish->read wall latency.
+                lat_ms = (time.time_ns() - hdr["timestamp_ns"]) / 1e6
+                lat = f" lat={lat_ms:.3f}ms"
             self.get_logger().info(
-                f"[{nm}] seq={hdr['seq']} {hdr['data_size']}B -> {desc}")
+                f"[{nm}] seq={hdr['seq']} {hdr['data_size']}B -> {desc}{lat}")
 
 
 def main():

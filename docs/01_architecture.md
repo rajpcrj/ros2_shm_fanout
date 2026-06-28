@@ -5,9 +5,14 @@ ROS 2's default transport (DDS) serializes every message to CDR bytes and delive
 a copy to each subscriber, spending CPU **per subscriber**. For large data (images,
 point clouds) on a **single machine** that is wasteful. This bridge instead writes
 each frame **once** into a POSIX shared-memory buffer in `/dev/shm`, and every
-reader on that machine maps the same bytes. Writing is O(1), RAM is O(1) (one copy
-regardless of reader count), and fan-out is O(1) (one `FUTEX_WAKE` wakes all
-readers). DDS fan-out is O(n).
+reader on that machine maps the same bytes. The **write** is O(1) and the
+**RAM** is O(1) in reader count (one physical copy, mapped by all). The writer's
+**publish/notify** is also O(1) — a single `FUTEX_WAKE` regardless of reader count.
+What is *not* O(1) is total CPU: each reader still wakes and reads its own copy, so
+delivering to N readers is **O(N) CPU** — inherently (you can't serve N consumers for
+free). The bridge's win is therefore a **much lower per-subscriber CPU constant**
+(~1.2 %/sub vs DDS ~10 %/sub), not a lower complexity class. DDS additionally pays
+serialize + a kernel copy *per* subscriber, so its constant is far larger.
 
 ## The three files per stream
 Each named stream `NAME` is three files in `/dev/shm`:
@@ -49,13 +54,16 @@ both reads saw the **same even** value (otherwise it caught a write in progress 
 retries). This is the classic seqlock; it favors the writer and is correct for a
 single writer + many readers. See [`02_data_flow.md`](02_data_flow.md).
 
-## Wakeup: futex, not busy-poll (the O(1) fan-out)
+## Wakeup: futex, not busy-poll (one O(1) wake for all readers)
 A naive reader would spin-read the seq counter, burning a core per reader. Instead
 the header's seq word doubles as a **futex**. After publishing, the writer calls
 `notify()` → one `FUTEX_WAKE` releases **all** waiting readers at once, regardless
-of how many there are. Readers call `Reader::wait_and_read()` which `FUTEX_WAIT`s
-at ~0% CPU until woken. This is why the bridge's CPU stays near-flat as subscribers
-grow (measured ~1.2 %/sub vs DDS ~10 %/sub — see `../../test/test5/README.md`).
+of how many there are (the writer's notify is O(1)). Readers call
+`Reader::wait_and_read()` which `FUTEX_WAIT`s at ~0% CPU until woken. Total delivery
+CPU still grows with readers — each reader wakes and reads its own copy, so it's
+**O(N)** — but with a low slope: measured ~1.2 %/sub vs DDS ~10 %/sub (see
+[../test_runs/README.md](../test_runs/README.md)). The win is a small constant, not a
+lower complexity class.
 
 Implementation: [`shm_futex.hpp`](../src/shm_bridge_cpp/include/shm_bridge_cpp/shm_futex.hpp).
 

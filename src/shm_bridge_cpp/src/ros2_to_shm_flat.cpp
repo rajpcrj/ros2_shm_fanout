@@ -125,8 +125,10 @@ private:
     }
 
     uint64_t now_ns() {
+        // CLOCK_MONOTONIC (steady_clock): writer and same-host reader subtract
+        // these directly for end-to-end latency, immune to wall-clock slew.
         return std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
+            std::chrono::steady_clock::now().time_since_epoch()).count();
     }
 
     void write_flat(const fa::Flat& f) {
