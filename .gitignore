@@ -6,6 +6,9 @@ log/
 # ---- large test assets (not source) ----
 TEST_CASES/
 
+# ---- generated PDF (regenerate from README.md via docs/readme_to_pdf.py) ----
+README.pdf
+
 # ---- generated message-schema dump (regenerate with generate_index.py) ----
 # Keep the script, classification lists, and index.json; drop the bulky
 # mirrored per-package .msg tree (regenerable on any ROS install).
