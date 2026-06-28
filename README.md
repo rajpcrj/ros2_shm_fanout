@@ -1,5 +1,64 @@
 # ros2_shm_network_bridge
 
+> **A same-host shared-memory transport for high-fan-out perception.**
+
+### The problem I hit
+I was building a multi-model perception pipeline — one camera frame feeding several
+models at once (object detection, segmentation, depth, pose, classification). On
+constrained compute, ROS 2's default transport was the bottleneck: it **serializes and
+copies the frame per subscriber**, so every model I added cost more CPU and more
+memory, and under load the pipeline started **dropping frames**. The transport, not
+the models, was the wall. So I built a transport designed for exactly this shape of
+workload: **one producer, many hungry consumers, large frames, on a single machine.**
+
+### What it is
+A **type-agnostic shared-memory transport.** The writer puts **one copy** of each
+frame into `/dev/shm` and signals readers with a **single futex wake**; every reader
+**maps the same physical pages** and reads its own view. No per-subscriber
+serialization, no per-subscriber copy, no DDS discovery/QoS machinery, no busy-polling
+(idle readers sleep on a futex at ~0 % CPU). Two paths: a **FLAT zero-copy** path for
+heavy numeric types (Image, PointCloud2, tensor-shaped arrays) and a **CDR fallback**
+covering all ~330 ROS message types.
+
+### Works beyond ROS
+A deliberate design point, not an accident. Because the FLAT path writes **raw frame
+bytes** into `/dev/shm` with a small binary header + a JSON recipe — **not** a
+ROS-serialized blob — a consumer doesn't have to be a ROS node to read it. **Any
+process that can `mmap` a file can consume the stream**: a non-ROS Python process in a
+separate conda env, a CUDA program, a model server outside the ROS graph. That
+mattered for my pipeline, where some consumers lived outside ROS entirely and the
+standard transport couldn't reach them without bridging overhead.
+
+### The findings
+Benchmarked honestly against the three production zero-copy transports — **FastDDS
+data-sharing, CycloneDDS+iceoryx, ros2_shm_msgs** — same payloads, **K=4 runs with
+variance**, whole-system (pid-set) CPU accounting. Full method + graphs:
+[test_runs/](test_runs/README.md).
+
+- **~8× lower CPU per consumer.** At **64 subscribers** on a 1 MiB stream the bridge
+  used **~78 % of one core**; the DDS zero-copy paths used **~620–670 %** (~6 cores).
+  The advantage is **structural** — the bridge's CPU rises **~1.2 %/subscriber** vs
+  DDS's **~10 %/subscriber** — and it widens with subscriber count. At a realistic
+  perception fan-out (**4–8 consumers**) it's already **~10–16× leaner**. *(This is
+  lower CPU, not lower latency — at a single subscriber DDS-loaned can win latency;
+  see [Performance](#performance--comparison-honest).)*
+- **Flat RAM.** Memory is **constant in the number of subscribers** (one physical
+  copy, mapped by all) — RAM was unchanged from 1 to 64 consumers. Genuinely **O(1)**
+  in subscriber count.
+- **Full-rate delivery under load.** The bridge held **~30 fps with ~0 % loss out to
+  64 subscribers** at every payload size. The DDS paths fell behind under CPU pressure
+  (down to **13–25 fps**), **CycloneDDS crashed at 32 subscribers** (iceoryx pool
+  exhaustion), and **ros2_shm_msgs segfaulted on an 8 MiB frame at a single
+  subscriber**.
+
+> **Honest scope:** the win is **CPU + memory + delivery integrity at fan-out** on a
+> **single machine**, not single-subscriber latency and not a cross-machine transport.
+> See [when NOT to use it](#so-why-is-it-good-for-this-use-case) and the
+> [benchmark caveats](#how-the-benchmarking-was-performed) (intra-process, one-way
+> latency). Numbers reproduce from [test_runs/data/sweep.csv](test_runs/data/sweep.csv).
+
+---
+
 A generic, **type-agnostic** ROS 2 ↔ shared-memory transport. A *writer* subscribes
 to any topic and publishes the message into `/dev/shm` under a lock-free **seqlock**;
 any number of *readers* on the same machine map the same bytes and wake on a single
